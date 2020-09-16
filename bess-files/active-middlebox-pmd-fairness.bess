@@ -1,0 +1,67 @@
+import json
+import os
+
+with open('/users/aphilip/config.py_dict', 'r') as f:
+    bess_conf = eval(f.read().strip())
+
+left_clients = bess_conf['left_clients'] # a list of tuples of (ip, mac) pairs
+right_clients = bess_conf['right_clients']
+speed_mbps = bess_conf['bw_mbps']
+q_size_packets = bess_conf['q_size_packets']
+
+left_nic_pci = bess_conf['left_nic_pci']
+right_nic_pci = bess_conf['right_nic_pci']
+left_nic_mac = bess_conf['left_nic_mac']
+right_nic_mac = bess_conf['right_nic_mac']
+
+
+left_nic::PMDPort(pci=left_nic_pci)
+right_nic::PMDPort(pci=right_nic_pci)
+
+# check if environment variables to say how to use Queue
+left_in::PortInc(port=left_nic)
+left_out::PortOut(port=left_nic)
+right_in::PortInc(port=right_nic)
+right_out::PortOut(port=right_nic)
+
+btl_queue::Queue(size=q_size_packets)
+btl_queue.set_burst(burst=1)
+bess.add_tc('bit_limit',
+      policy='rate_limit',
+      resource='bit',
+      limit={'bit': speed_mbps*1024*1024})
+btl_queue.attach_task(parent='bit_limit')
+
+btl_queue2::Queue(size=q_size_packets)
+btl_queue2.set_burst(burst=1)
+bess.add_tc('bit_limit2',
+      policy='rate_limit',
+      resource='bit',
+      limit={'bit': speed_mbps*1024*1024})
+btl_queue2.attach_task(parent='bit_limit2')
+
+# TODO: Change to bytes.fromhex
+# accept only packets with the MAC address of our left interface
+em_left::ExactMatch(fields=[{'offset':0, 'num_bytes':6}])
+em_left.add(fields=[{'value_bin':bytes(bytearray.fromhex(left_nic_mac))}], gate=0)
+# accept only packets with the MAC address of our right interface
+em_right::ExactMatch(fields=[{'offset':0, 'num_bytes':6}])
+em_right.add(fields=[{'value_bin':bytes(bytearray.fromhex(right_nic_mac))}], gate=0)
+
+ip_match_left::IPLookup()
+for i, ip_mac_pair in enumerate(left_clients):
+      ip_match_left.add(prefix=ip_mac_pair[0], prefix_len=32, gate=i)
+      ip_match_left:i -> Update(fields=[{'offset': 0, 'size': 6, 'value': int("0x" + ip_mac_pair[1])},
+                                    {'offset': 6, 'size': 6, 'value': int("0x" + left_nic_mac)}]) -> btl_queue -> left_out
+
+ip_match_right::IPLookup()
+for i, ip_mac_pair in enumerate(right_clients):
+      ip_match_right.add(prefix=ip_mac_pair[0], prefix_len=32, gate=i)
+      ip_match_right:i -> Update(fields=[{'offset': 0, 'size': 6, 'value': int("0x" + ip_mac_pair[1])},
+                                    {'offset': 6, 'size': 6, 'value': int("0x" + right_nic_mac)}]) -> btl_queue2 -> right_out
+
+left_in -> em_left
+em_left:0 ->ip_match_left
+
+right_in -> em_right
+em_right:0 -> ip_match_right
