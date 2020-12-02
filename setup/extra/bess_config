@@ -1,0 +1,1 @@
+{'left_clients': [('192.168.1.1', '9cdc7156afd5')], 'right_clients': [('192.168.1.11', '9cdc715d0191')], 'bw_mbps': 1024, 'q_size_packets': 4096, 'left_nic_pci': '0000:03:00.1', 'right_nic_pci': '0000:03:00.0', 'left_nic_mac': '9cdc715d5121', 'right_nic_mac': '9cdc715d5120'}

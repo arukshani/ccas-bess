@@ -1,7 +1,7 @@
 import json
 import os
 
-with open('/users/aphilip/config.py_dict', 'r') as f:
+with open($CCAS_BESS_CONFIG, 'r') as f:
     bess_conf = eval(f.read().strip())
 
 left_clients = bess_conf['left_clients'] # a list of tuples of (ip, mac) pairs
@@ -24,21 +24,24 @@ left_out::PortOut(port=left_nic)
 right_in::PortInc(port=right_nic)
 right_out::PortOut(port=right_nic)
 
-btl_queue::Queue(size=q_size_packets)
-btl_queue.set_burst(burst=1)
+btl_queue_left::Queue(size=q_size_packets, backpressure=False)
+# btl_queue_left2::Queue(size=q_size_packets, backpressure=False) # t
+btl_queue_left.set_burst(burst=32)
+# btl_queue_left2.set_burst(burst=1) # t
 bess.add_tc('bit_limit',
       policy='rate_limit',
       resource='bit',
       limit={'bit': speed_mbps*1024*1024})
-btl_queue.attach_task(parent='bit_limit')
+btl_queue_left.attach_task(parent='bit_limit')
+# btl_queue_left2.attach_task(parent='bit_limit') # t
 
-btl_queue2::Queue(size=q_size_packets)
-btl_queue2.set_burst(burst=1)
+btl_queue_right::Queue(size=q_size_packets, backpressure=False)
+btl_queue_right.set_burst(burst=32)
 bess.add_tc('bit_limit2',
       policy='rate_limit',
       resource='bit',
       limit={'bit': speed_mbps*1024*1024})
-btl_queue2.attach_task(parent='bit_limit2')
+btl_queue_right.attach_task(parent='bit_limit2')
 
 # TODO: Change to bytes.fromhex
 # accept only packets with the MAC address of our left interface
@@ -48,20 +51,26 @@ em_left.add(fields=[{'value_bin':bytes(bytearray.fromhex(left_nic_mac))}], gate=
 em_right::ExactMatch(fields=[{'offset':0, 'num_bytes':6}])
 em_right.add(fields=[{'value_bin':bytes(bytearray.fromhex(right_nic_mac))}], gate=0)
 
-ip_match_left::IPLookup()
-for i, ip_mac_pair in enumerate(left_clients):
-      ip_match_left.add(prefix=ip_mac_pair[0], prefix_len=32, gate=i)
-      ip_match_left:i -> Update(fields=[{'offset': 0, 'size': 6, 'value': int("0x" + ip_mac_pair[1])},
-                                    {'offset': 6, 'size': 6, 'value': int("0x" + left_nic_mac)}]) -> btl_queue -> left_out
+merger_left::Merge()
+merger_right::Merge()
 
-ip_match_right::IPLookup()
+ip_match::IPLookup()
+# ip_match2::IPLookup()
+for i, ip_mac_pair in enumerate(left_clients):
+      ip_match.add(prefix=ip_mac_pair[0], prefix_len=32, gate=i)
+      ip_match:i -> Update(fields=[{'offset': 0, 'size': 6, 'value': int(ip_mac_pair[1], 16)},
+                                    {'offset': 6, 'size': 6, 'value': int(left_nic_mac, 16)}]) -> merger_left
+
 for i, ip_mac_pair in enumerate(right_clients):
-      ip_match_right.add(prefix=ip_mac_pair[0], prefix_len=32, gate=i)
-      ip_match_right:i -> Update(fields=[{'offset': 0, 'size': 6, 'value': int("0x" + ip_mac_pair[1])},
-                                    {'offset': 6, 'size': 6, 'value': int("0x" + right_nic_mac)}]) -> btl_queue2 -> right_out
+      ip_match.add(prefix=ip_mac_pair[0], prefix_len=32, gate=i + len(left_clients))
+      ip_match:(i + len(left_clients)) -> Update(fields=[{'offset': 0, 'size': 6, 'value': int(ip_mac_pair[1], 16)},
+                                    {'offset': 6, 'size': 6, 'value': int(right_nic_mac, 16)}]) -> merger_right
 
 left_in -> em_left
-em_left:0 ->ip_match_left
+em_left:0 ->ip_match
 
 right_in -> em_right
-em_right:0 -> ip_match_right
+em_right:0 -> ip_match # packets from the right can only go left
+
+merger_left -> btl_queue_left -> left_out
+merger_right -> btl_queue_right -> right_out
