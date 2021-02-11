@@ -1,7 +1,7 @@
 BESS_LEFT_NIC_PCI='0000:03:00.1'
 BESS_RIGHT_NIC_PCI='0000:03:00.0'
-BESS_LEFT_NIC_MAC='9c:dc:71:5d:51:21'
-BESS_RIGHT_NIC_MAC='9c:dc:71:5d:51:20'
+BESS_LEFT_NIC_MAC='9c:dc:71:5e:2f:61'
+BESS_RIGHT_NIC_MAC='9c:dc:71:5e:2f:60'
 BESS_LEFT_NIC_IP='192.168.1.250'
 BESS_RIGHT_NIC_IP='192.168.1.251'
 CLIENTS_LEFT_FPATH="clients_left_tot"
@@ -26,7 +26,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # Enable hugepages and disable IP forwarding on BESS node
-echo "Getting IP/MAC pairs from all nodes and creating bess config"
+echo "Enabling hugepages and disabling ip forwarding on BESS node"
 ssh $SSH_OPTIONS $BESS_LEFT_NIC_IP "sudo sysctl vm.nr_hugepages=1024 && sudo sysctl net.ipv4.ip_forward=0"
 
 if [ $? -ne 0 ]; then

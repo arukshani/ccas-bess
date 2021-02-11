@@ -127,6 +127,11 @@ private:
     uint64_t init_time_micro;
     void LogDroppedPacket(uint64_t time_ns, bess::utils::be32_t src_ip, bess::utils::be16_t src_port);
 
+    FILE *avg_q_size_file = NULL;
+    double avg_queue_size;
+    uint64_t tot_q_measures;
+    uint64_t time_q_logged;
+    void LogQueueSize(uint64_t now_ns);
 };
 
 #endif  // BESS_MODULES_QUEUE_H_

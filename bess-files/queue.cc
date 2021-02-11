@@ -43,6 +43,7 @@
 
 #include "../utils/time.h"
 #include "stdio.h"
+#include "fstream"
 
 using bess::utils::Ethernet;
 using bess::utils::Ipv4;
@@ -174,9 +175,16 @@ CommandResponse Queue::SetRuntimeConfig(const bess::pb::QueueArg &arg) {
 void Queue::DeInit() {
     bess::Packet *pkt;
 
+// PHILIP
     if (drop_log_file) {
         fclose(drop_log_file);
     }
+
+    if (avg_q_size_file) {
+        fclose(avg_q_size_file);
+    }
+
+// END: PHILIP
 
     if (queue_) {
         while (llring_sc_dequeue(queue_, (void **) &pkt) == 0) {
@@ -205,7 +213,18 @@ void Queue::LogDroppedPacket(uint64_t time_ns, bess::utils::be32_t src_ip, bess:
     }
 }
 
+// Added by PHILIP - not BESS code!
+void Queue::LogQueueSize(uint64_t now_ns) {
+    if (avg_q_size_file && (now_ns - time_q_logged) / 1000 / 1000 / 1000 > 20) {
+        time_q_logged = now_ns;
+        fwrite(&avg_queue_size,sizeof(avg_queue_size), 1, avg_q_size_file);
+//        fflush(drop_log_file);
+//        fsync(fileno(drop_log_file));
+    }
+}
+
 /* from upstream */
+// PHILIP: has tinkered with this function
 void Queue::ProcessBatch(Context *, bess::PacketBatch *batch) {
     int queued =
             llring_mp_enqueue_burst(queue_, (void **) batch->pkts(), batch->cnt());
@@ -218,6 +237,22 @@ void Queue::ProcessBatch(Context *, bess::PacketBatch *batch) {
     uint64_t now_ns = tsc_to_ns(rdtsc()) - init_time_micro; // get time at beginning - fine pkts in same batch have same timestamp
 
     stats_.enqueued += queued;
+
+    // PHILIP: Starts q size recording if we have a drop and we haven't started queue recording yet
+    // If we have started recording, logs the recorded avg q size
+    // we have drops
+    if (!avg_q_size_file) {
+        std::ifstream infile("/users/aphilip/start-measuring.cmd");
+        if (infile.good()) {
+            avg_q_size_file = fopen("/users/aphilip/q-size.log", "wb");
+            std::cerr << "Opened queue file!"; // logs into /tmp/bessd.WARNING
+            avg_queue_size = stats_.enqueued - stats_.dequeued;
+            tot_q_measures = 1;
+            time_q_logged = 0;
+        }
+    } else {
+        LogQueueSize(now_ns);
+    }
 
     for (int i = queued; i < batch->cnt(); i++) {
         bess::Packet *pkt = batch->pkts()[i];
@@ -247,6 +282,15 @@ void Queue::ProcessBatch(Context *, bess::PacketBatch *batch) {
 /* to downstream */
 struct task_result Queue::RunTask(Context *ctx, bess::PacketBatch *batch,
                                   void *) {
+
+    // PHILIP
+    if (avg_q_size_file) {
+    // if we have a log file, update recorded queue size
+        uint64_t q_size = stats_.enqueued - stats_.dequeued;
+        avg_queue_size = avg_queue_size * (tot_q_measures / 1.0 / (tot_q_measures + 1)) + q_size / 1.0 / (tot_q_measures + 1);
+        tot_q_measures++;
+    }
+    //END: PHILIP
     if (children_overload_ > 0) {
         return {
                 .block = true,

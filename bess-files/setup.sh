@@ -13,5 +13,12 @@ sudo /etc/init.d/openibd restart
 
 cd ..
 git clone https://github.com/adithyaphilip/bess
+rm bess/core/modules/queue.cc
+rm bess/core/modules/queue.h
+ln -s $(pwd)/queue.cc bess/core/modules/
+ln -s $(pwd)/queue.h bess/core/modules/
+ln -s $(pwd)/ccas-router.bess bess/bessctl/conf/samples/
 cd bess
 ./build.py
+
+cd ..
