@@ -2,10 +2,10 @@ sudo apt update && sudo apt install -y make apt-transport-https ca-certificates 
 pip install protobuf grpcio scapy
 sudo sysctl vm.nr_hugepages=1024
 
-rm -rf MLNX_OFED_LINUX-5.1-0.6.6.0-ubuntu18.04-x86_64.tgz MLNX_OFED_LINUX-5.1-0.6.6.0-ubuntu18.04-x86_64
-wget http://content.mellanox.com/ofed/MLNX_OFED-5.1-0.6.6.0/MLNX_OFED_LINUX-5.1-0.6.6.0-ubuntu18.04-x86_64.tgz
-tar -xvf MLNX_OFED_LINUX-5.1-0.6.6.0-ubuntu18.04-x86_64.tgz
-cd MLNX_OFED_LINUX-5.1-0.6.6.0-ubuntu18.04-x86_64
+rm -rf MLNX_OFED_LINUX-5.3-1.0.0.1-ubuntu18.04-x86_64.tgz MLNX_OFED_LINUX-5.3-1.0.0.1-ubuntu18.04-x86_64
+wget https://content.mellanox.com/ofed/MLNX_OFED-5.3-1.0.0.1/MLNX_OFED_LINUX-5.3-1.0.0.1-ubuntu18.04-x86_64.tgz
+tar -xvf MLNX_OFED_LINUX-5.3-1.0.0.1-ubuntu18.04-x86_64.tgz
+cd MLNX_OFED_LINUX-5.3-1.0.0.1-ubuntu18.04-x86_64
 sudo ./mlnxofedinstall --force --upstream-libs --dpdk
 sudo apt-get -y --fix-broken install
 sudo ./mlnxofedinstall --force --upstream-libs --dpdk

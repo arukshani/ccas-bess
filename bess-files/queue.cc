@@ -48,6 +48,8 @@
 using bess::utils::Ethernet;
 using bess::utils::Ipv4;
 using bess::utils::Tcp;
+using bess::utils::be16_t;
+using bess::utils::be32_t;
 
 #define DEFAULT_QUEUE_SIZE 1024
 
@@ -139,8 +141,8 @@ CommandResponse Queue::Init(const bess::pb::QueueArg &arg) {
         prefetch_ = true;
     }
 
-    // ADDED BY PHILIP. Uncomment to enable logging
-//    drop_log_file = fopen("/users/aphilip/bess-drop.log", "wb");
+    // ADDED BY PHILIP. Uncomment to enable packet drop logging
+    drop_log_file = fopen("/users/aphilip/bess-drop.log", "wb");
     init_time_micro = tsc_to_ns(rdtsc());
     // END OF ADDED BY PHILIP
 
@@ -201,13 +203,17 @@ std::string Queue::GetDesc() const {
 }
 
 // Added by PHILIP - not BESS code! NOTE: Only logs the last byte of IP since we're trying to optimize on space
-void Queue::LogDroppedPacket(uint64_t time_ns, bess::utils::be32_t src_ip, bess::utils::be16_t src_port) {
+void Queue::LogDroppedPacket(uint64_t time_ns, bess::utils::be32_t src_ip, bess::utils::be16_t src_port,
+                            bess::utils::be16_t dst_port, bess::utils::be32_t seq_num, uint16_t pkt_size) {
 // logs the dropped packet with information including timestamp, src IP and src port
     uint32_t time_micros = (uint32_t) (time_ns / 1000); // make it micros
     if (drop_log_file) {
         fwrite(&time_micros, sizeof(uint32_t), 1, drop_log_file);
         fwrite(((char*)&src_ip)+3, 1, 1, drop_log_file); // we just want the last portion of the IP
         fwrite(&src_port,sizeof(bess::utils::be16_t), 1, drop_log_file);
+        fwrite(&dst_port,sizeof(bess::utils::be16_t), 1, drop_log_file);
+        fwrite(&seq_num,sizeof(bess::utils::be32_t), 1, drop_log_file);
+        fwrite(&pkt_size,sizeof(uint16_t), 1, drop_log_file);
 //        fflush(drop_log_file);
 //        fsync(fileno(drop_log_file));
     }
@@ -220,6 +226,37 @@ void Queue::LogQueueSize(uint64_t now_ns) {
         fwrite(&avg_queue_size,sizeof(avg_queue_size), 1, avg_q_size_file);
 //        fflush(drop_log_file);
 //        fsync(fileno(drop_log_file));
+    }
+}
+
+void Queue::RecordInQStats(bool enq, be32_t src_ip, be16_t src_port) {
+    std::pair<be32_t, be16_t> ip_port = std::pair<be32_t, be16_t>(src_ip, src_port);
+    if (packets_in_q.count(ip_port) == 0) {
+        packets_in_q[ip_port] = 0;
+    }
+
+    if (enq) {
+        packets_in_q[ip_port]++;
+    } else {
+        packets_in_q[ip_port]--;
+    }
+}
+
+// Added by PHILIP - not BESS code!
+void Queue::LogInQ(uint64_t now_ns) {
+    if (in_q_log_file && (now_ns - time_inq_logged) / 1000 / 1000 > 100) {
+        time_inq_logged = now_ns;
+        uint32_t time_log_ms = (uint32_t) (now_ns / 1000 / 1000);
+        for (auto it : packets_in_q) {
+            std::pair<be32_t, be16_t> ip_port = it.first;
+            be32_t ip = ip_port.first;
+            be16_t port = ip_port.second;
+            uint32_t in_q = it.second;
+            fwrite(&time_log_ms,sizeof(time_log_ms), 1, in_q_log_file); // 4 bytes
+            fwrite(((char*)&ip)+3, 1, 1, in_q_log_file); // we just want the last portion of the IP
+            fwrite(&port,sizeof(port), 1, in_q_log_file); // 2 bytes
+            fwrite(&in_q,sizeof(in_q), 1, in_q_log_file); // 4 bytes
+        }
     }
 }
 
@@ -254,13 +291,27 @@ void Queue::ProcessBatch(Context *, bess::PacketBatch *batch) {
         LogQueueSize(now_ns);
     }
 
+    // PHILIP: This is for logging per-flow info of packets in queue
+    if (!in_q_log_file) {
+        std::ifstream infile("/users/aphilip/measure-inq.cmd");
+        if (infile.good()) {
+            in_q_log_file = fopen("/users/aphilip/in-q.log", "wb");
+            std::cerr << "Opened In Queue queue file!"; // logs into /tmp/bessd.WARNING
+            time_inq_logged = 0;
+        }
+    } else {
+        LogInQ(now_ns);
+    }
+
+//        std::cerr << "Checking if dropped!";
+//        std::cerr << queued;
+//        std::cerr << batch->cnt();
+// Uncomment for q drop logging PHILIP
     for (int i = queued; i < batch->cnt(); i++) {
         bess::Packet *pkt = batch->pkts()[i];
         Ethernet *eth = pkt->head_data<Ethernet *>();
         Ipv4 *ip = reinterpret_cast<Ipv4 *>(eth + 1);
 //        std::cerr << "Dropped!";
-//        std::cerr << queued;
-//        std::cerr << batch->cnt();
 
         // don't do anything if this isn't a TCP packet
         if (ip->protocol == Ipv4::Proto::kTcp) {
@@ -268,13 +319,33 @@ void Queue::ProcessBatch(Context *, bess::PacketBatch *batch) {
             Tcp *tcp = reinterpret_cast<Tcp *>(reinterpret_cast<uint8_t *>(ip) + ip_bytes);
 
             // packet is dropped ctx.current_ns()
-            LogDroppedPacket(now_ns, ip->src, tcp->src_port);
+            LogDroppedPacket(now_ns, ip->src, tcp->src_port, tcp->dst_port, tcp->seq_num, pkt->data_len());
+        }
+    }
+
+    if (in_q_log_file) {
+        for (int i = 0; i < queued; i++) {
+            bess::Packet *pkt = batch->pkts()[i];
+            Ethernet *eth = pkt->head_data<Ethernet *>();
+            Ipv4 *ip = reinterpret_cast<Ipv4 *>(eth + 1);
+
+            // don't do anything if this isn't a TCP packet
+            if (ip->protocol == Ipv4::Proto::kTcp) {
+                int ip_bytes = ip->header_length << 2;
+                Tcp *tcp = reinterpret_cast<Tcp *>(reinterpret_cast<uint8_t *>(ip) + ip_bytes);
+
+                // record for in q stats
+    //            if (tcp->dst_port.raw_value() >= 6000 && tcp->dst_port.raw_value() <= 7000) {
+                    RecordInQStats(true, ip->src, tcp->src_port);
+    //            }
+            }
         }
     }
 
     if (queued < batch->cnt()) {
         int to_drop = batch->cnt() - queued;
         stats_.dropped += to_drop;
+//        std::cerr << "Dropped! OG";
         bess::Packet::Free(batch->pkts() + queued, to_drop);
     }
 }
@@ -312,6 +383,24 @@ struct task_result Queue::RunTask(Context *ctx, bess::PacketBatch *batch,
 
     stats_.dequeued += cnt;
     batch->set_cnt(cnt);
+
+    if (in_q_log_file) {
+        // update flow stats for each dequeued packet (RAY)
+        for (int i = 0; i < batch->cnt(); i++) {
+            bess::Packet *pkt = batch->pkts()[i];
+            Ethernet *eth = pkt->head_data<Ethernet *>();
+            Ipv4 *ip = reinterpret_cast<Ipv4 *>(eth + 1);
+
+            // don't do anything if this isn't a TCP packet
+            if (ip->protocol == Ipv4::Proto::kTcp) {
+              int ip_bytes = ip->header_length << 2;
+              Tcp *tcp = reinterpret_cast<Tcp *>(reinterpret_cast<uint8_t *>(ip) + ip_bytes);
+    //            if (tcp->dst_port.raw_value() >= 6000 && tcp->dst_port.raw_value() <= 7000) {
+                    RecordInQStats(false, ip->src, tcp->src_port);
+    //            }
+            }
+        }
+    }
 
     if (prefetch_) {
         for (uint32_t i = 0; i < cnt; i++) {

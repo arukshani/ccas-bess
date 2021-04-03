@@ -13,3 +13,6 @@ parallel-ssh $PSSH_OPTIONS -h $CLIENTS_LEFT_FPATH -h $CLIENTS_RIGHT_FPATH "git c
 
 # 3. Clone cloudlab repo and run startup.sh from it passing a parameter so it skips setting up ssh
 parallel-ssh $PSSH_OPTIONS -h $CLIENTS_LEFT_FPATH -h $CLIENTS_RIGHT_FPATH -t 0 "sudo apt update && rm -rf cloudlab && git clone https://github.com/adithyaphilip/cloudlab --single-branch; cd cloudlab && bash startup.sh nosshsetup;"
+
+# 3. Setup storage on the nodes
+parallel-ssh $PSSH_OPTIONS -h $CLIENTS_LEFT_FPATH -h $CLIENTS_RIGHT_FPATH -t 0 "mkdir storage; sudo /usr/local/etc/emulab/mkextrafs.pl -f storage; sudo chown aphilip storage"

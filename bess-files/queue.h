@@ -38,7 +38,12 @@
 
 #include "../utils/format.h"
 #include "../utils/endian.h"
+#include "../utils/ip.h"
+#include <unordered_map>
+#include <utility>
 
+using bess::utils::be16_t;
+using bess::utils::be32_t;
 
 class Queue : public Module {
 public:
@@ -125,13 +130,31 @@ private:
     // ADDED BY PHILIP - not part of BESS code
     FILE *drop_log_file = NULL;
     uint64_t init_time_micro;
-    void LogDroppedPacket(uint64_t time_ns, bess::utils::be32_t src_ip, bess::utils::be16_t src_port);
+    void LogDroppedPacket(uint64_t time_ns, bess::utils::be32_t src_ip, bess::utils::be16_t src_port,
+                            be16_t dst_port, be32_t seq_num, uint16_t pkt_size);
 
     FILE *avg_q_size_file = NULL;
     double avg_queue_size;
     uint64_t tot_q_measures;
     uint64_t time_q_logged;
     void LogQueueSize(uint64_t now_ns);
+    // logging in-queue packet counts to estimate packets in flight
+    FILE *in_q_log_file = NULL;
+    uint64_t time_inq_logged;
+
+    struct pair_hash {
+    template <class T1, class T2>
+    std::size_t operator () (const std::pair<T1,T2> &p) const {
+        auto h1 = std::hash<T1>{}(p.first);
+        auto h2 = std::hash<T2>{}(p.second);
+
+        return h1 ^ h2;
+    }
+    };
+
+    std::unordered_map<std::pair<be32_t, be16_t>, uint32_t, pair_hash> packets_in_q;
+    void LogInQ(uint64_t now_ns);
+    void RecordInQStats(bool enq, be32_t src_ip, be16_t src_port);
 };
 
 #endif  // BESS_MODULES_QUEUE_H_
